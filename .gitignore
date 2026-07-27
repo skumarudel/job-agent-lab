@@ -1,0 +1,30 @@
+# Local process / AI context (not for public GitHub)
+_docs/
+
+# Secrets and env
+.env
+.env.*
+!.env.example
+**/credentials*.json
+**/service-account*.json
+
+# Runtime data
+data/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
