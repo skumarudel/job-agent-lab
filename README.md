@@ -20,6 +20,10 @@ Copy `.env.example` to `.env` and set:
 
 Share the sheet with the service account email (Viewer). Unit tests mock the Sheets API and do not need credentials.
 
+## Scraping (local live use)
+
+Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Unit tests mock the fetch and do not need a browser. For a real scrape you need Chrome installed; Selenium Manager resolves the driver.
+
 ## CI
 
 Pull requests and pushes to `main` run the same test command on GitHub Actions (see `.github/workflows/ci.yml`).
