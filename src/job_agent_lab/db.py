@@ -1,10 +1,11 @@
-"""SQLite access for jobs: schema, sheet row model, and pending inserts."""
+"""SQLite access for jobs: schema, sheet row model, and status updates."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 import sqlite3
 
 
@@ -151,3 +152,80 @@ def insert_pending_job(conn: sqlite3.Connection, job_id: str, row: JobRow) -> bo
         return True
     except sqlite3.IntegrityError:
         return False
+
+
+def list_jobs_to_process(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """Return jobs that still need scrape/summary processing.
+
+    Includes pipeline ``pending`` and ``error`` rows (errors are retried).
+    Does not include ``ready`` jobs.
+
+    Args:
+        conn: Open connection from ``init_db``.
+
+    Returns:
+        List of ``(job_id, job_link)`` pairs ordered by ``created_at``.
+    """
+    rows = conn.execute(
+        """
+        SELECT job_id, job_link FROM jobs
+        WHERE status IN ('pending', 'error')
+        ORDER BY created_at ASC
+        """
+    ).fetchall()
+    return [(row[0], row[1]) for row in rows]
+
+
+def mark_job_ready(
+    conn: sqlite3.Connection,
+    job_id: str,
+    summary: str,
+    requirements: list[str],
+) -> None:
+    """Store summary/requirements and set pipeline status to ``ready``.
+
+    Does not set ``cover_letter`` (left for a later step). Clears
+    ``error_message``.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key of the job to update.
+        summary: Short text summary of the posting.
+        requirements: Structured requirement strings stored as JSON.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET summary = ?,
+            requirements_json = ?,
+            status = 'ready',
+            error_message = NULL,
+            updated_at = ?
+        WHERE job_id = ?
+        """,
+        (summary, json.dumps(requirements), now, job_id),
+    )
+    conn.commit()
+
+
+def mark_job_error(conn: sqlite3.Connection, job_id: str, error_message: str) -> None:
+    """Set pipeline status to ``error`` and record the failure message.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key of the job to update.
+        error_message: Human-readable reason for the failure.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'error',
+            error_message = ?,
+            updated_at = ?
+        WHERE job_id = ?
+        """,
+        (error_message, now, job_id),
+    )
+    conn.commit()
