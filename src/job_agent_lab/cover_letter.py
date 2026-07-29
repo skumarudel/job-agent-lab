@@ -135,6 +135,14 @@ def tailor_cover_letter(
     return "\n\n".join(parts)
 
 
+# Target role families for this lab's job applications.
+TARGET_ROLE_FAMILIES = (
+    "Data Engineer",
+    "Analytics Engineer",
+    "Data Scientist",
+)
+
+
 def build_ollama_rewrite_prompt(
     base_text: str,
     *,
@@ -144,6 +152,10 @@ def build_ollama_rewrite_prompt(
     requirements: list[str] | None = None,
 ) -> str:
     """Build the user prompt for an Ollama cover-letter rewrite.
+
+    The prompt steers wording toward one of the lab's target role families
+    (Data Engineer, Analytics Engineer, Data Scientist) based on the posting,
+    without inventing experience beyond the base letter.
 
     Args:
         base_text: Base letter text (source of allowed experience).
@@ -158,12 +170,23 @@ def build_ollama_rewrite_prompt(
     req_block = "\n".join(f"- {item}" for item in (requirements or []) if str(item).strip())
     if not req_block:
         req_block = "- (none provided)"
+    families = ", ".join(TARGET_ROLE_FAMILIES)
     return (
         "Rewrite the cover letter for this job application.\n"
         "Rules:\n"
         "- Use ONLY experience, skills, and claims present in the base letter.\n"
         "- Do NOT invent employers, degrees, titles, or achievements.\n"
         "- Customize wording for the company and position.\n"
+        f"- This applicant targets three role families only: {families}.\n"
+        "- Infer which family best matches this posting from the position title, "
+        "summary, and requirements (pick the closest one; if unclear, prefer the "
+        "family whose themes appear most in the base letter).\n"
+        "- Emphasize language and themes appropriate to that family, for example:\n"
+        "  - Data Engineer: pipelines, ETL/ELT, warehousing, orchestration, reliability\n"
+        "  - Analytics Engineer: dbt/modeling, semantic layers, analytics-ready data\n"
+        "  - Data Scientist: modeling/analysis, experimentation, statistical insight\n"
+        "- Only use those themes if they are already supported by the base letter; "
+        "do not fabricate skills to fit the family.\n"
         "- You may reference the summary/requirements only to align emphasis.\n"
         "- Return only the final cover letter text (no preamble).\n\n"
         f"Company: {(company or '').strip() or 'unknown'}\n"
@@ -225,7 +248,9 @@ def rewrite_cover_letter_with_ollama(
             {
                 "role": "system",
                 "content": (
-                    "You are a careful cover-letter editor. Never invent experience."
+                    "You are a careful cover-letter editor for Data Engineer, "
+                    "Analytics Engineer, and Data Scientist applications. "
+                    "Never invent experience."
                 ),
             },
             {
