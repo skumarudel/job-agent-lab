@@ -11,6 +11,19 @@ uv sync --dev
 uv run pytest
 ```
 
+## CLI
+
+```bash
+# Full pipeline: sheet sync → scrape/analyze → cover letters
+uv run job-agent-lab run
+
+# Inspect results
+uv run job-agent-lab list
+uv run job-agent-lab show <job_id>
+```
+
+Default DB path is `data/jobs.db` (created on first run). Override with `--db` or `JOB_AGENT_DB_PATH`. Loads `.env` automatically for Google/Ollama settings.
+
 ## Google Sheets (optional for local use)
 
 Copy `.env.example` to `.env` and set:
