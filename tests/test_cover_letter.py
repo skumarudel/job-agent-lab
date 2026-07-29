@@ -1,10 +1,14 @@
+import json
 from pathlib import Path
 
+import httpx
 from docx import Document
 
 from job_agent_lab.cover_letter import (
     load_base_cover_letter,
+    normalize_ollama_model,
     process_cover_letters,
+    rewrite_cover_letter_with_ollama,
     tailor_cover_letter,
 )
 from job_agent_lab.db import (
@@ -46,6 +50,11 @@ def _ready_job(conn, link: str, company: str = "Acme", position: str = "Engineer
     return job_id
 
 
+def test_normalize_ollama_model_strips_prefix():
+    assert normalize_ollama_model("ollama_chat/gemma4:e4b-mlx") == "gemma4:e4b-mlx"
+    assert normalize_ollama_model("gemma4:e4b-mlx") == "gemma4:e4b-mlx"
+
+
 def test_load_and_tailor_include_base_and_job(tmp_path):
     path = _write_docx(
         tmp_path / "base.docx",
@@ -69,7 +78,6 @@ def test_load_and_tailor_include_base_and_job(tmp_path):
     assert "Platform Engineer" in letter
     assert "software engineer with experience building APIs in Python" in letter
     assert "5+ years of Python experience" in letter
-    # Does not invent employers/roles beyond base + job metadata
     assert "Staff Engineer at Netflix" not in letter
 
 
@@ -85,7 +93,9 @@ def test_process_updates_ready_jobs_and_skips_existing(tmp_path):
 
     assert [row[0] for row in list_jobs_needing_cover_letter(conn)] == [need_id]
 
-    result = process_cover_letters(conn, base_letter_path=base)
+    result = process_cover_letters(
+        conn, base_letter_path=base, provider="heuristic"
+    )
     assert result["updated"] == [need_id]
     assert result["error"] == []
 
@@ -110,7 +120,9 @@ def test_missing_base_marks_error_without_wiping_ready(tmp_path):
     conn = init_db(tmp_path / "jobs.db")
     job_id = _ready_job(conn, "https://example.com/jobs/missing-base")
 
-    result = process_cover_letters(conn, base_letter_path=tmp_path / "nope.docx")
+    result = process_cover_letters(
+        conn, base_letter_path=tmp_path / "nope.docx", provider="heuristic"
+    )
     assert result["updated"] == []
     assert result["error"] == [job_id]
 
@@ -129,3 +141,94 @@ def test_repo_placeholder_cover_letter_loads():
     path = repo_root / "assets" / "cover_letter.docx"
     text = load_base_cover_letter(path)
     assert "software engineer" in text.lower()
+
+
+def test_rewrite_cover_letter_with_ollama_uses_chat_api():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "Dear Hiring Manager,\n\nTailored for Globex.\n",
+                }
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport) as client:
+        letter = rewrite_cover_letter_with_ollama(
+            "I build APIs in Python.",
+            company="Globex",
+            position="Engineer",
+            summary="Platform role",
+            requirements=["Python experience"],
+            api_base="http://localhost:11434",
+            model="ollama_chat/gemma4:e4b-mlx",
+            client=client,
+        )
+
+    assert "Globex" in letter
+    assert captured["url"] == "http://localhost:11434/api/chat"
+    assert captured["payload"]["model"] == "gemma4:e4b-mlx"
+    assert captured["payload"]["stream"] is False
+    assert "do not invent" in captured["payload"]["messages"][1]["content"].lower()
+
+
+def test_process_with_ollama_provider_stores_model_text(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    base = _write_docx(tmp_path / "base.docx", ["Base letter body."])
+    job_id = _ready_job(conn, "https://example.com/jobs/ollama")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"message": {"role": "assistant", "content": "LLM letter for Acme"}},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = process_cover_letters(
+            conn,
+            base_letter_path=base,
+            provider="ollama",
+            ollama_client=client,
+        )
+
+    assert result == {"updated": [job_id], "error": []}
+    saved = conn.execute(
+        "SELECT cover_letter, status FROM jobs WHERE job_id = ?", (job_id,)
+    ).fetchone()
+    assert saved == ("LLM letter for Acme", "ready")
+    conn.close()
+
+
+def test_process_ollama_http_error_keeps_ready(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    base = _write_docx(tmp_path / "base.docx", ["Base letter body."])
+    job_id = _ready_job(conn, "https://example.com/jobs/ollama-fail")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "boom"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = process_cover_letters(
+            conn,
+            base_letter_path=base,
+            provider="ollama",
+            ollama_client=client,
+        )
+
+    assert result["updated"] == []
+    assert result["error"] == [job_id]
+    row = conn.execute(
+        "SELECT status, summary, cover_letter FROM jobs WHERE job_id = ?",
+        (job_id,),
+    ).fetchone()
+    assert row[0] == "ready"
+    assert row[1] == "Build reliable systems."
+    assert row[2] is None
+    conn.close()

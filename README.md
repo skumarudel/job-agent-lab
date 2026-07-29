@@ -26,7 +26,14 @@ Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rende
 
 ## Cover letter
 
-Base letter lives at `assets/cover_letter.docx` (replace with your own). Tailoring keeps that body and adds company/position (plus optional interest lines from requirements); it does not invent new experience.
+Base letter lives at `assets/cover_letter.docx` (replace with your own).
+
+By default letters are rewritten with a **local Ollama** model (`COVER_LETTER_PROVIDER=ollama`). Set in `.env`:
+
+- `OLLAMA_API_BASE=http://localhost:11434`
+- `OLLAMA_MODEL=ollama_chat/gemma4:e4b-mlx`
+
+Use `COVER_LETTER_PROVIDER=heuristic` for the non-LLM template path. Unit tests mock Ollama HTTP and do not need a running server.
 
 ## CI
 
