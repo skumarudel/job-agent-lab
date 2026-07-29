@@ -201,3 +201,50 @@ def test_fetch_from_env_requires_vars(monkeypatch):
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "GOOGLE_SERVICE_ACCOUNT_FILE" in str(exc)
+
+
+def test_sync_inserts_applied_and_updates_metadata(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    applied = JobRow(
+        sheet_row_id="1",
+        saved_date="2026-01-01",
+        company="Acme",
+        position="Eng",
+        location="Remote",
+        job_link="https://example.com/jobs/applied-meta",
+        application_status="Applied",
+        notes="old",
+    )
+    not_applied = JobRow(
+        sheet_row_id="2",
+        saved_date="2026-01-02",
+        company="Beta",
+        position="DE",
+        location="NYC",
+        job_link="https://example.com/jobs/open-meta",
+        application_status="Not applied",
+    )
+    inserted = sync_new_jobs_from_rows(conn, [applied, not_applied])
+    assert len(inserted) == 2
+
+    updated_applied = JobRow(
+        sheet_row_id="1",
+        saved_date="2026-01-01",
+        company="Acme Updated",
+        position="Senior Eng",
+        location="Remote",
+        job_link=applied.job_link,
+        application_status="Applied",
+        notes="new note",
+        interview_stage="Screen",
+    )
+    again = sync_new_jobs_from_rows(conn, [updated_applied, not_applied])
+    assert again == []
+
+    row = conn.execute(
+        "SELECT company, position, notes, interview_stage, status, summary "
+        "FROM jobs WHERE job_id = ?",
+        (job_id_from_link(applied.job_link),),
+    ).fetchone()
+    assert row == ("Acme Updated", "Senior Eng", "new note", "Screen", "pending", None)
+    conn.close()

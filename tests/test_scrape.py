@@ -34,7 +34,7 @@ SAMPLE_HTML = """
 """
 
 
-def _insert(conn, link: str, company: str = "Acme") -> str:
+def _insert(conn, link: str, company: str = "Acme", application_status: str = "Not applied") -> str:
     row = JobRow(
         sheet_row_id="1",
         saved_date="2026-01-01",
@@ -42,6 +42,7 @@ def _insert(conn, link: str, company: str = "Acme") -> str:
         position="Eng",
         location="Remote",
         job_link=link,
+        application_status=application_status,
     )
     job_id = job_id_from_link(link)
     assert insert_pending_job(conn, job_id, row)
@@ -239,3 +240,29 @@ def test_analyze_job_text_with_ollama_validates_pydantic():
     assert isinstance(analysis, JobAnalysis)
     assert analysis.role_family == "Analytics Engineer"
     assert "dbt" in analysis.important_skills
+
+
+def test_process_skips_applied_pending_jobs(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    applied_id = _insert(
+        conn,
+        "https://example.com/jobs/applied",
+        application_status="Applied",
+    )
+    open_id = _insert(conn, "https://example.com/jobs/open")
+
+    assert list_jobs_to_process(conn) == [
+        (open_id, "https://example.com/jobs/open"),
+    ]
+
+    result = process_pending_jobs(
+        conn, fetch_html=lambda _url: SAMPLE_HTML, provider="heuristic"
+    )
+    assert result["ready"] == [open_id]
+    assert applied_id not in result["ready"]
+
+    applied_status = conn.execute(
+        "SELECT status, summary FROM jobs WHERE job_id = ?", (applied_id,)
+    ).fetchone()
+    assert applied_status == ("pending", None)
+    conn.close()

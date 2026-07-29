@@ -8,7 +8,12 @@ from typing import Any, Sequence
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from job_agent_lab.db import JobRow, existing_job_ids, insert_pending_job
+from job_agent_lab.db import (
+    JobRow,
+    existing_job_ids,
+    insert_pending_job,
+    update_job_sheet_metadata,
+)
 from job_agent_lab.job_id import job_id_from_link
 
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
@@ -255,7 +260,7 @@ def fetch_sheet_job_rows_from_env(
 def new_jobs_not_in_db(conn, rows: Sequence[JobRow]) -> list[tuple[str, JobRow]]:
     """Filter sheet rows to those whose job_id is not already in SQLite.
 
-    Does not insert rows. Existing jobs are skipped even if sheet Status changed.
+    Does not insert rows. Does not filter by Applied / Not applied.
 
     Args:
         conn: Open SQLite connection from ``init_db``.
@@ -274,17 +279,26 @@ def new_jobs_not_in_db(conn, rows: Sequence[JobRow]) -> list[tuple[str, JobRow]]
 
 
 def sync_new_jobs_from_rows(conn, rows: Sequence[JobRow]) -> list[str]:
-    """Insert new sheet jobs as pending and return their job_ids.
+    """Insert new sheet jobs and refresh metadata for existing ones.
+
+    All statuses (Applied / Not applied) are stored. Scraping and cover
+    letters still run only for ``Not applied`` jobs via the process helpers.
 
     Args:
         conn: Open SQLite connection from ``init_db``.
         rows: Parsed sheet jobs (typically from ``fetch_sheet_job_rows*``).
 
     Returns:
-        job_id strings successfully inserted on this call.
+        job_id strings newly inserted on this call (metadata updates omitted).
     """
+    known = existing_job_ids(conn)
     inserted: list[str] = []
-    for job_id, row in new_jobs_not_in_db(conn, rows):
+    for row in rows:
+        job_id = job_id_from_link(row.job_link)
+        if job_id in known:
+            update_job_sheet_metadata(conn, job_id, row)
+            continue
         if insert_pending_job(conn, job_id, row):
             inserted.append(job_id)
+            known.add(job_id)
     return inserted
