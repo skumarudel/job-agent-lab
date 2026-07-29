@@ -33,6 +33,8 @@ By default letters are rewritten with a **local Ollama** model (`COVER_LETTER_PR
 - `OLLAMA_API_BASE=http://localhost:11434`
 - `OLLAMA_MODEL=ollama_chat/gemma4:e4b-mlx`
 
+The rewrite prompt steers toward the lab's three target role families: **Data Engineer**, **Analytics Engineer**, and **Data Scientist** (closest match from the posting; still no invented experience).
+
 Use `COVER_LETTER_PROVIDER=heuristic` for the non-LLM template path. Unit tests mock Ollama HTTP and do not need a running server.
 
 ## CI

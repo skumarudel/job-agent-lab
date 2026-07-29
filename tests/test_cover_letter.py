@@ -176,7 +176,13 @@ def test_rewrite_cover_letter_with_ollama_uses_chat_api():
     assert captured["url"] == "http://localhost:11434/api/chat"
     assert captured["payload"]["model"] == "gemma4:e4b-mlx"
     assert captured["payload"]["stream"] is False
-    assert "do not invent" in captured["payload"]["messages"][1]["content"].lower()
+    user_prompt = captured["payload"]["messages"][1]["content"].lower()
+    assert "do not invent" in user_prompt
+    assert "data engineer" in user_prompt
+    assert "analytics engineer" in user_prompt
+    assert "data scientist" in user_prompt
+    system_prompt = captured["payload"]["messages"][0]["content"].lower()
+    assert "data engineer" in system_prompt
 
 
 def test_process_with_ollama_provider_stores_model_text(tmp_path):
