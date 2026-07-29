@@ -1,3 +1,5 @@
+"""SQLite access for jobs: schema, sheet row model, and pending inserts."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,6 +40,20 @@ _EXTRA_COLUMNS = (
 
 @dataclass(frozen=True)
 class JobRow:
+    """One job row parsed from the Google Sheet (before/while storing in SQLite).
+
+    Attributes:
+        sheet_row_id: Value from the sheet ID column.
+        saved_date: Value from the sheet Date column.
+        company: Employer name from the sheet.
+        position: Role title from the sheet.
+        location: Location from the sheet.
+        job_link: Posting URL (required for processing).
+        application_status: Sheet Status (Applied / Not applied), not pipeline status.
+        notes: Free-text notes from the sheet.
+        interview_stage: Sheet Interview stage dropdown value.
+    """
+
     sheet_row_id: str
     saved_date: str
     company: str
@@ -50,6 +66,7 @@ class JobRow:
 
 
 def _ensure_extra_columns(conn: sqlite3.Connection) -> None:
+    """Add newer columns to an existing jobs table if they are missing."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     for name, col_type in _EXTRA_COLUMNS:
         if name not in existing:
@@ -57,6 +74,17 @@ def _ensure_extra_columns(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: str | Path) -> sqlite3.Connection:
+    """Create or open the jobs SQLite database and ensure the schema exists.
+
+    Creates parent directories as needed. Pipeline ``status`` values are
+    ``pending`` / ``ready`` / ``error`` (separate from ``application_status``).
+
+    Args:
+        path: Filesystem path to the ``.db`` file (e.g. ``data/jobs.db``).
+
+    Returns:
+        An open ``sqlite3.Connection`` with the ``jobs`` table ready.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -67,12 +95,32 @@ def init_db(path: str | Path) -> sqlite3.Connection:
 
 
 def existing_job_ids(conn: sqlite3.Connection) -> set[str]:
+    """Return the set of job_id values already stored in the jobs table.
+
+    Args:
+        conn: Open connection from ``init_db``.
+
+    Returns:
+        Set of primary-key job ids currently in the database.
+    """
     rows = conn.execute("SELECT job_id FROM jobs").fetchall()
     return {row[0] for row in rows}
 
 
 def insert_pending_job(conn: sqlite3.Connection, job_id: str, row: JobRow) -> bool:
-    """Insert a pending job. Returns True if inserted, False if job_id already exists."""
+    """Insert a sheet job with pipeline status ``pending``.
+
+    Leaves ``summary``, ``requirements_json``, and ``cover_letter`` null for
+    later processing. Does not update an existing row.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key from ``job_id_from_link``.
+        row: Sheet fields to store alongside the link.
+
+    Returns:
+        True if a new row was inserted; False if ``job_id`` already existed.
+    """
     now = datetime.now(timezone.utc).isoformat()
     try:
         conn.execute(

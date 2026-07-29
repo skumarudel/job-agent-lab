@@ -1,3 +1,5 @@
+"""Read job rows from Google Sheets and sync new links into SQLite."""
+
 from __future__ import annotations
 
 import os
@@ -61,21 +63,43 @@ INTERVIEW_STAGES = (
 
 
 def _normalize_header(value: Any) -> str:
+    """Lowercase and collapse whitespace in a header cell for matching."""
     return " ".join(str(value or "").strip().lower().split())
 
 
 def _cell(row: Sequence[Any], index: int | None) -> str:
+    """Return a stripped string cell, or empty string if missing."""
     if index is None or index >= len(row) or row[index] is None:
         return ""
     return str(row[index]).strip()
 
 
 def normalize_application_status(value: str) -> str:
+    """Normalize sheet Status to Applied / Not applied when recognized.
+
+    Args:
+        value: Raw status cell from the sheet.
+
+    Returns:
+        Canonical ``Applied`` or ``Not applied``, or the trimmed original
+        string if it does not match a known alias.
+    """
     key = " ".join(value.strip().lower().split())
     return _APPLICATION_STATUS_ALIASES.get(key, value.strip())
 
 
 def normalize_interview_stage(value: str) -> str:
+    """Normalize sheet Interview stage to a known dropdown label when possible.
+
+    Known labels are listed in ``INTERVIEW_STAGES``.
+
+    Args:
+        value: Raw interview-stage cell from the sheet.
+
+    Returns:
+        Canonical stage string, empty string if blank, or the trimmed original
+        if unrecognized.
+    """
     key = " ".join(value.strip().lower().split())
     if not key:
         return ""
@@ -83,7 +107,17 @@ def normalize_interview_stage(value: str) -> str:
 
 
 def map_headers(header_row: Sequence[Any]) -> dict[str, int]:
-    """Map logical JobRow fields to column indexes from the sheet header row."""
+    """Map JobRow field names to column indexes using the sheet header row.
+
+    Args:
+        header_row: First row of the sheet (column titles).
+
+    Returns:
+        Dict from logical field name (e.g. ``job_link``) to zero-based index.
+
+    Raises:
+        ValueError: If no Job link column (or accepted alias) is present.
+    """
     index_by_name = {
         _normalize_header(name): i for i, name in enumerate(header_row) if _normalize_header(name)
     }
@@ -102,7 +136,17 @@ def map_headers(header_row: Sequence[Any]) -> dict[str, int]:
 
 
 def parse_sheet_values(values: Sequence[Sequence[Any]]) -> list[JobRow]:
-    """Parse sheet grid values using header names. Skips empty Job links."""
+    """Parse a Sheets values grid into JobRow objects.
+
+    Uses the first row as headers. Skips data rows with an empty Job link.
+    Does not call Google or touch the database.
+
+    Args:
+        values: Grid from the Sheets API ``values`` list (header + data rows).
+
+    Returns:
+        Parsed jobs with normalized application_status and interview_stage.
+    """
     if not values:
         return []
 
@@ -133,6 +177,14 @@ def parse_sheet_values(values: Sequence[Sequence[Any]]) -> list[JobRow]:
 
 
 def build_sheets_service(credentials_file: str):
+    """Build a read-only Google Sheets API client from a service-account JSON file.
+
+    Args:
+        credentials_file: Absolute path to the service account key JSON.
+
+    Returns:
+        Google API Resource for the Sheets v4 service.
+    """
     credentials = service_account.Credentials.from_service_account_file(
         credentials_file,
         scopes=SCOPES,
@@ -146,6 +198,19 @@ def fetch_sheet_job_rows(
     range_name: str = DEFAULT_RANGE,
     service: Any | None = None,
 ) -> list[JobRow]:
+    """Fetch and parse job rows from a Google Spreadsheet.
+
+    Performs a network call unless ``service`` is provided (tests inject a fake).
+
+    Args:
+        spreadsheet_id: Spreadsheet id from the sheet URL.
+        credentials_file: Path to the service account JSON.
+        range_name: A1 range to read (default ``A:Z``).
+        service: Optional pre-built Sheets service (for tests).
+
+    Returns:
+        Job rows with a non-empty Job link.
+    """
     sheets_service = service or build_sheets_service(credentials_file)
     result = (
         sheets_service.spreadsheets()
@@ -161,6 +226,18 @@ def fetch_sheet_job_rows_from_env(
     range_name: str = DEFAULT_RANGE,
     service: Any | None = None,
 ) -> list[JobRow]:
+    """Fetch job rows using ``GOOGLE_SERVICE_ACCOUNT_FILE`` and ``GOOGLE_SHEET_ID``.
+
+    Args:
+        range_name: A1 range to read (default ``A:Z``).
+        service: Optional pre-built Sheets service (for tests).
+
+    Returns:
+        Job rows with a non-empty Job link.
+
+    Raises:
+        ValueError: If either required env var is missing or empty.
+    """
     credentials_file = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
     spreadsheet_id = os.environ.get("GOOGLE_SHEET_ID", "").strip()
     if not credentials_file:
@@ -176,6 +253,17 @@ def fetch_sheet_job_rows_from_env(
 
 
 def new_jobs_not_in_db(conn, rows: Sequence[JobRow]) -> list[tuple[str, JobRow]]:
+    """Filter sheet rows to those whose job_id is not already in SQLite.
+
+    Does not insert rows. Existing jobs are skipped even if sheet Status changed.
+
+    Args:
+        conn: Open SQLite connection from ``init_db``.
+        rows: Parsed sheet jobs.
+
+    Returns:
+        List of ``(job_id, JobRow)`` pairs that are new to the database.
+    """
     known = existing_job_ids(conn)
     new_jobs: list[tuple[str, JobRow]] = []
     for row in rows:
@@ -186,7 +274,15 @@ def new_jobs_not_in_db(conn, rows: Sequence[JobRow]) -> list[tuple[str, JobRow]]
 
 
 def sync_new_jobs_from_rows(conn, rows: Sequence[JobRow]) -> list[str]:
-    """Insert new sheet jobs as pending. Returns inserted job_ids."""
+    """Insert new sheet jobs as pending and return their job_ids.
+
+    Args:
+        conn: Open SQLite connection from ``init_db``.
+        rows: Parsed sheet jobs (typically from ``fetch_sheet_job_rows*``).
+
+    Returns:
+        job_id strings successfully inserted on this call.
+    """
     inserted: list[str] = []
     for job_id, row in new_jobs_not_in_db(conn, rows):
         if insert_pending_job(conn, job_id, row):
