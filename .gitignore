@@ -12,6 +12,10 @@ _docs/
 data/
 *.db
 
+# Local notebooks (not for GitHub)
+notebooks/
+*.ipynb
+
 # Python
 __pycache__/
 *.py[cod]
@@ -28,3 +32,4 @@ build/
 .DS_Store
 .idea/
 .vscode/
+.cursor/

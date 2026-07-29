@@ -11,6 +11,15 @@ uv sync --dev
 uv run pytest
 ```
 
+## Google Sheets (optional for local use)
+
+Copy `.env.example` to `.env` and set:
+
+- `GOOGLE_SERVICE_ACCOUNT_FILE` — path to the service account JSON
+- `GOOGLE_SHEET_ID` — spreadsheet ID
+
+Share the sheet with the service account email (Viewer). Unit tests mock the Sheets API and do not need credentials.
+
 ## CI
 
 Pull requests and pushes to `main` run the same test command on GitHub Actions (see `.github/workflows/ci.yml`).
