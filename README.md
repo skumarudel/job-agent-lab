@@ -24,6 +24,10 @@ Share the sheet with the service account email (Viewer). Unit tests mock the She
 
 Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Unit tests mock the fetch and do not need a browser. For a real scrape you need Chrome installed; Selenium Manager resolves the driver.
 
+## Cover letter
+
+Base letter lives at `assets/cover_letter.docx` (replace with your own). Tailoring keeps that body and adds company/position (plus optional interest lines from requirements); it does not invent new experience.
+
 ## CI
 
 Pull requests and pushes to `main` run the same test command on GitHub Actions (see `.github/workflows/ci.yml`).

@@ -229,3 +229,58 @@ def mark_job_error(conn: sqlite3.Connection, job_id: str, error_message: str) ->
         (error_message, now, job_id),
     )
     conn.commit()
+
+
+def list_jobs_needing_cover_letter(
+    conn: sqlite3.Connection,
+) -> list[tuple[str, str, str, str, str]]:
+    """Return ready jobs that do not yet have a cover letter.
+
+    Args:
+        conn: Open connection from ``init_db``.
+
+    Returns:
+        List of ``(job_id, company, position, summary, requirements_json)``
+        ordered by ``created_at``. ``summary`` / ``requirements_json`` may be
+        empty strings if missing.
+    """
+    rows = conn.execute(
+        """
+        SELECT job_id, company, position, summary, requirements_json
+        FROM jobs
+        WHERE status = 'ready'
+          AND (cover_letter IS NULL OR TRIM(cover_letter) = '')
+        ORDER BY created_at ASC
+        """
+    ).fetchall()
+    return [
+        (
+            row[0],
+            row[1] or "",
+            row[2] or "",
+            row[3] or "",
+            row[4] or "[]",
+        )
+        for row in rows
+    ]
+
+
+def update_cover_letter(conn: sqlite3.Connection, job_id: str, cover_letter: str) -> None:
+    """Store a cover letter for a job without changing pipeline status.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key of the job to update.
+        cover_letter: Full tailored letter text to store.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET cover_letter = ?,
+            updated_at = ?
+        WHERE job_id = ?
+        """,
+        (cover_letter, now, job_id),
+    )
+    conn.commit()
