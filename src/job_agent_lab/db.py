@@ -155,11 +155,27 @@ def insert_pending_job(conn: sqlite3.Connection, job_id: str, row: JobRow) -> bo
         return False
 
 
+NOT_APPLIED_STATUS = "Not applied"
+
+
+def is_not_applied(application_status: str) -> bool:
+    """Return True when sheet Status means the job should be processed.
+
+    Args:
+        application_status: Stored or sheet status value (preferably normalized).
+
+    Returns:
+        True only for canonical ``Not applied``.
+    """
+    return (application_status or "").strip() == NOT_APPLIED_STATUS
+
+
 def list_jobs_to_process(conn: sqlite3.Connection) -> list[tuple[str, str]]:
-    """Return jobs that still need scrape/summary processing.
+    """Return Not-applied jobs that still need scrape/summary processing.
 
     Includes pipeline ``pending`` and ``error`` rows (errors are retried).
-    Does not include ``ready`` jobs.
+    Skips ``ready`` jobs and any row whose sheet ``application_status`` is not
+    ``Not applied`` (Applied jobs are metadata-only).
 
     Args:
         conn: Open connection from ``init_db``.
@@ -171,8 +187,10 @@ def list_jobs_to_process(conn: sqlite3.Connection) -> list[tuple[str, str]]:
         """
         SELECT job_id, job_link FROM jobs
         WHERE status IN ('pending', 'error')
+          AND application_status = ?
         ORDER BY created_at ASC
-        """
+        """,
+        (NOT_APPLIED_STATUS,),
     ).fetchall()
     return [(row[0], row[1]) for row in rows]
 
@@ -241,7 +259,9 @@ def mark_job_error(conn: sqlite3.Connection, job_id: str, error_message: str) ->
 def list_jobs_needing_cover_letter(
     conn: sqlite3.Connection,
 ) -> list[tuple[str, str, str, str, str]]:
-    """Return ready jobs that do not yet have a cover letter.
+    """Return Not-applied ready jobs that do not yet have a cover letter.
+
+    Skips Applied (and other non–Not-applied) rows even if ``ready``.
 
     Args:
         conn: Open connection from ``init_db``.
@@ -256,9 +276,11 @@ def list_jobs_needing_cover_letter(
         SELECT job_id, company, position, summary, requirements_json
         FROM jobs
         WHERE status = 'ready'
+          AND application_status = ?
           AND (cover_letter IS NULL OR TRIM(cover_letter) = '')
         ORDER BY created_at ASC
-        """
+        """,
+        (NOT_APPLIED_STATUS,),
     ).fetchall()
     return [
         (
@@ -289,6 +311,51 @@ def update_cover_letter(conn: sqlite3.Connection, job_id: str, cover_letter: str
         WHERE job_id = ?
         """,
         (cover_letter, now, job_id),
+    )
+    conn.commit()
+
+
+def update_job_sheet_metadata(conn: sqlite3.Connection, job_id: str, row: JobRow) -> None:
+    """Refresh sheet metadata fields without touching analysis or cover letter.
+
+    Updates link/metadata/`application_status` from the sheet. Does not change
+    ``summary``, ``requirements_json``, ``cover_letter``, pipeline ``status``,
+    or ``error_message``.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key of the job to update.
+        row: Latest sheet fields for this job.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET job_link = ?,
+            sheet_row_id = ?,
+            saved_date = ?,
+            company = ?,
+            position = ?,
+            location = ?,
+            application_status = ?,
+            notes = ?,
+            interview_stage = ?,
+            updated_at = ?
+        WHERE job_id = ?
+        """,
+        (
+            row.job_link,
+            row.sheet_row_id,
+            row.saved_date,
+            row.company,
+            row.position,
+            row.location,
+            row.application_status,
+            row.notes,
+            row.interview_stage,
+            now,
+            job_id,
+        ),
     )
     conn.commit()
 

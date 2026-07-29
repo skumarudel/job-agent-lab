@@ -73,6 +73,7 @@ def test_list_and_show_commands(tmp_path, capsys):
             position="Data Engineer",
             location="Remote",
             job_link=link,
+            application_status="Not applied",
         ),
     )
     mark_job_ready(
@@ -125,6 +126,7 @@ def test_list_ready_jobs_helper(tmp_path):
             position="DS",
             location="Remote",
             job_link=link,
+            application_status="Not applied",
         ),
     )
     mark_job_ready(conn, job_id, "summary", ["req"])

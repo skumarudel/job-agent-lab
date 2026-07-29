@@ -37,6 +37,8 @@ Share the sheet with the service account email (Viewer). Unit tests mock the She
 
 Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Page text is summarized with **local Ollama** into a Pydantic `JobAnalysis` (`summary`, `key_requirements`, `important_skills`, `role_family`). Set `JOB_ANALYSIS_PROVIDER=heuristic` for the non-LLM path. Unit tests mock fetch/Ollama and do not need a browser or Ollama server.
 
+Sheet **Status**: all rows are synced into SQLite (insert/update metadata). Scrape, analysis, and cover letters run only for **Not applied** jobs; **Applied** jobs stay metadata-only.
+
 ## Cover letter
 
 Base letter lives at `assets/cover_letter.docx` (replace with your own).

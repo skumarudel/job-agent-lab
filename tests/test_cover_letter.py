@@ -30,7 +30,13 @@ def _write_docx(path: Path, paragraphs: list[str]) -> Path:
     return path
 
 
-def _ready_job(conn, link: str, company: str = "Acme", position: str = "Engineer") -> str:
+def _ready_job(
+    conn,
+    link: str,
+    company: str = "Acme",
+    position: str = "Engineer",
+    application_status: str = "Not applied",
+) -> str:
     row = JobRow(
         sheet_row_id="1",
         saved_date="2026-01-01",
@@ -38,6 +44,7 @@ def _ready_job(conn, link: str, company: str = "Acme", position: str = "Engineer
         position=position,
         location="Remote",
         job_link=link,
+        application_status=application_status,
     )
     job_id = job_id_from_link(link)
     assert insert_pending_job(conn, job_id, row)
@@ -211,6 +218,27 @@ def test_process_with_ollama_provider_stores_model_text(tmp_path):
         "SELECT cover_letter, status FROM jobs WHERE job_id = ?", (job_id,)
     ).fetchone()
     assert saved == ("LLM letter for Acme", "ready")
+    conn.close()
+
+
+def test_process_skips_applied_ready_for_cover_letter(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    base = _write_docx(tmp_path / "base.docx", ["Base letter body."])
+    applied_id = _ready_job(
+        conn,
+        "https://example.com/jobs/applied-letter",
+        application_status="Applied",
+    )
+    open_id = _ready_job(conn, "https://example.com/jobs/open-letter")
+
+    assert [row[0] for row in list_jobs_needing_cover_letter(conn)] == [open_id]
+
+    result = process_cover_letters(conn, base_letter_path=base, provider="heuristic")
+    assert result["updated"] == [open_id]
+    applied_letter = conn.execute(
+        "SELECT cover_letter FROM jobs WHERE job_id = ?", (applied_id,)
+    ).fetchone()
+    assert applied_letter == (None,)
     conn.close()
 
 
