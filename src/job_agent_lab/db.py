@@ -291,3 +291,57 @@ def update_cover_letter(conn: sqlite3.Connection, job_id: str, cover_letter: str
         (cover_letter, now, job_id),
     )
     conn.commit()
+
+
+def list_ready_jobs(
+    conn: sqlite3.Connection,
+) -> list[tuple[str, str, str, bool]]:
+    """Return ready jobs for CLI listing.
+
+    Args:
+        conn: Open connection from ``init_db``.
+
+    Returns:
+        List of ``(job_id, company, position, has_cover_letter)`` ordered by
+        ``updated_at`` descending.
+    """
+    rows = conn.execute(
+        """
+        SELECT job_id, company, position, cover_letter
+        FROM jobs
+        WHERE status = 'ready'
+        ORDER BY updated_at DESC
+        """
+    ).fetchall()
+    return [
+        (
+            row[0],
+            row[1] or "",
+            row[2] or "",
+            bool(row[3] and str(row[3]).strip()),
+        )
+        for row in rows
+    ]
+
+
+def get_job(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:
+    """Fetch one job row as a dict for CLI ``show``.
+
+    Args:
+        conn: Open connection from ``init_db``.
+        job_id: Primary key to look up.
+
+    Returns:
+        Mapping of column names to values, or ``None`` if not found.
+    """
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+    finally:
+        conn.row_factory = None
+    if row is None:
+        return None
+    return dict(row)
