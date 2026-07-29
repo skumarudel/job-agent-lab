@@ -8,22 +8,32 @@ import sqlite3
 
 CREATE_JOBS_TABLE = """
 CREATE TABLE IF NOT EXISTS jobs (
-  job_id            TEXT PRIMARY KEY,
-  job_link          TEXT NOT NULL,
-  sheet_row_id      TEXT,
-  saved_date        TEXT,
-  company           TEXT,
-  position          TEXT,
-  location          TEXT,
-  summary           TEXT,
-  requirements_json TEXT,
-  cover_letter      TEXT,
-  status            TEXT NOT NULL,
-  error_message     TEXT,
-  created_at        TEXT NOT NULL,
-  updated_at        TEXT NOT NULL
+  job_id              TEXT PRIMARY KEY,
+  job_link            TEXT NOT NULL,
+  sheet_row_id        TEXT,
+  saved_date          TEXT,
+  company             TEXT,
+  position            TEXT,
+  location            TEXT,
+  application_status  TEXT,
+  notes               TEXT,
+  interview_stage     TEXT,
+  summary             TEXT,
+  requirements_json   TEXT,
+  cover_letter        TEXT,
+  status              TEXT NOT NULL,
+  error_message       TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
 );
 """
+
+# Extra columns for DBs created before this change
+_EXTRA_COLUMNS = (
+    ("application_status", "TEXT"),
+    ("notes", "TEXT"),
+    ("interview_stage", "TEXT"),
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +44,16 @@ class JobRow:
     position: str
     location: str
     job_link: str
+    application_status: str = ""
+    notes: str = ""
+    interview_stage: str = ""
+
+
+def _ensure_extra_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    for name, col_type in _EXTRA_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {col_type}")
 
 
 def init_db(path: str | Path) -> sqlite3.Connection:
@@ -41,6 +61,7 @@ def init_db(path: str | Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.execute(CREATE_JOBS_TABLE)
+    _ensure_extra_columns(conn)
     conn.commit()
     return conn
 
@@ -58,9 +79,10 @@ def insert_pending_job(conn: sqlite3.Connection, job_id: str, row: JobRow) -> bo
             """
             INSERT INTO jobs (
               job_id, job_link, sheet_row_id, saved_date, company, position,
-              location, summary, requirements_json, cover_letter, status,
+              location, application_status, notes, interview_stage,
+              summary, requirements_json, cover_letter, status,
               error_message, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'pending', NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'pending', NULL, ?, ?)
             """,
             (
                 job_id,
@@ -70,6 +92,9 @@ def insert_pending_job(conn: sqlite3.Connection, job_id: str, row: JobRow) -> bo
                 row.company,
                 row.position,
                 row.location,
+                row.application_status,
+                row.notes,
+                row.interview_stage,
                 now,
                 now,
             ),

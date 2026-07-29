@@ -15,7 +15,8 @@ HEADER = [
     "Position",
     "Location",
     "Job link",
-    "Status Notes",
+    "Status",
+    "Notes",
     "Interview stage",
 ]
 
@@ -23,20 +24,32 @@ HEADER = [
 def test_parse_skips_empty_job_links():
     values = [
         HEADER,
-        ["1", "2026-01-01", "Acme", "Eng", "Remote", "https://example.com/jobs/1", "", ""],
-        ["2", "2026-01-02", "Beta", "PM", "NYC", "", "notes", ""],
-        ["3", "2026-01-03", "Gamma", "QA", "SF", "https://example.com/jobs/3", "", ""],
+        ["1", "2026-01-01", "Acme", "Eng", "Remote", "https://example.com/jobs/1", "Applied", "", ""],
+        ["2", "2026-01-02", "Beta", "PM", "NYC", "", "Not applied", "notes", ""],
+        ["3", "2026-01-03", "Gamma", "QA", "SF", "https://example.com/jobs/3", "Not applied", "x", "screen"],
     ]
     rows = parse_sheet_values(values)
     assert len(rows) == 2
     assert rows[0].company == "Acme"
+    assert rows[0].application_status == "Applied"
     assert rows[1].job_link == "https://example.com/jobs/3"
+    assert rows[1].interview_stage == "Screen"
 
 
 def test_parse_sheet_values_maps_columns():
     values = [
         HEADER,
-        ["42", "2026-07-01", "Acme", "SWE", "Remote", "https://Example.COM/jobs/42/", "", ""],
+        [
+            "42",
+            "2026-07-01",
+            "Acme",
+            "SWE",
+            "Remote",
+            "https://Example.COM/jobs/42/",
+            "not applied",
+            "follow up",
+            "1st interview",
+        ],
     ]
     rows = parse_sheet_values(values)
     assert rows == [
@@ -47,8 +60,46 @@ def test_parse_sheet_values_maps_columns():
             position="SWE",
             location="Remote",
             job_link="https://Example.COM/jobs/42/",
+            application_status="Not applied",
+            notes="follow up",
+            interview_stage="1st interview",
         )
     ]
+
+
+def test_parse_infers_columns_from_reordered_headers():
+    values = [
+        ["Job link", "Company", "ID", "Status", "Notes", "Interview stage", "Extra"],
+        ["https://example.com/jobs/7", "Acme", "7", "Applied", "hi", "waiting on a response", "ignore-me"],
+        ["", "Skip", "8", "Not applied", "", "", "no-link"],
+    ]
+    rows = parse_sheet_values(values)
+    assert len(rows) == 1
+    assert rows[0].job_link == "https://example.com/jobs/7"
+    assert rows[0].company == "Acme"
+    assert rows[0].sheet_row_id == "7"
+    assert rows[0].application_status == "Applied"
+    assert rows[0].notes == "hi"
+    assert rows[0].interview_stage == "Waiting on a response"
+
+
+def test_normalize_interview_stage_known_values():
+    from job_agent_lab.sheets import INTERVIEW_STAGES, normalize_interview_stage
+
+    assert normalize_interview_stage("SCREEN") == "Screen"
+    assert normalize_interview_stage("No Response") == "No Response"
+    assert normalize_interview_stage("declined") == "Declined"
+    assert normalize_interview_stage("2nd interview") == "2nd interview"
+    assert normalize_interview_stage("offer") == "Offer"
+    assert set(INTERVIEW_STAGES) == {
+        "Waiting on a response",
+        "Screen",
+        "1st interview",
+        "2nd interview",
+        "Offer",
+        "Declined",
+        "No Response",
+    }
 
 
 def test_new_jobs_not_in_db(tmp_path):

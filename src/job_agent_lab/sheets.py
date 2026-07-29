@@ -10,41 +10,123 @@ from job_agent_lab.db import JobRow, existing_job_ids, insert_pending_job
 from job_agent_lab.job_id import job_id_from_link
 
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
-DEFAULT_RANGE = "A:H"
+DEFAULT_RANGE = "A:Z"
 
-# Header: ID | Date | Company | Position | Location | Job link | Status Notes | Interview stage
-COL_ID = 0
-COL_DATE = 1
-COL_COMPANY = 2
-COL_POSITION = 3
-COL_LOCATION = 4
-COL_JOB_LINK = 5
+# Logical field -> accepted header names (matched case-insensitively)
+HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "sheet_row_id": ("id", "sheet id", "row id"),
+    "saved_date": ("date", "saved date"),
+    "company": ("company",),
+    "position": ("position", "title", "role"),
+    "location": ("location",),
+    "job_link": ("job link", "job url", "link", "url"),
+    # Sheet "Status" = Applied / Not applied (not the DB pipeline status)
+    "application_status": ("status", "application status", "applied status"),
+    "notes": ("notes", "status notes", "note"),
+    "interview_stage": ("interview stage", "interview_stage", "stage"),
+}
+
+# Soft-normalize common Status values from the sheet dropdown
+_APPLICATION_STATUS_ALIASES = {
+    "applied": "Applied",
+    "not applied": "Not applied",
+    "not-applied": "Not applied",
+    "notapplied": "Not applied",
+}
+
+# Soft-normalize Interview stage dropdown values
+_INTERVIEW_STAGE_ALIASES = {
+    "waiting on a response": "Waiting on a response",
+    "waiting on response": "Waiting on a response",
+    "screen": "Screen",
+    "1st interview": "1st interview",
+    "first interview": "1st interview",
+    "2nd interview": "2nd interview",
+    "second interview": "2nd interview",
+    "offer": "Offer",
+    "declined": "Declined",
+    "no response": "No Response",
+    "no-response": "No Response",
+}
+
+INTERVIEW_STAGES = (
+    "Waiting on a response",
+    "Screen",
+    "1st interview",
+    "2nd interview",
+    "Offer",
+    "Declined",
+    "No Response",
+)
 
 
-def _cell(row: Sequence[Any], index: int) -> str:
-    if index >= len(row) or row[index] is None:
+def _normalize_header(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _cell(row: Sequence[Any], index: int | None) -> str:
+    if index is None or index >= len(row) or row[index] is None:
         return ""
     return str(row[index]).strip()
 
 
+def normalize_application_status(value: str) -> str:
+    key = " ".join(value.strip().lower().split())
+    return _APPLICATION_STATUS_ALIASES.get(key, value.strip())
+
+
+def normalize_interview_stage(value: str) -> str:
+    key = " ".join(value.strip().lower().split())
+    if not key:
+        return ""
+    return _INTERVIEW_STAGE_ALIASES.get(key, value.strip())
+
+
+def map_headers(header_row: Sequence[Any]) -> dict[str, int]:
+    """Map logical JobRow fields to column indexes from the sheet header row."""
+    index_by_name = {
+        _normalize_header(name): i for i, name in enumerate(header_row) if _normalize_header(name)
+    }
+    mapping: dict[str, int] = {}
+    for field, aliases in HEADER_ALIASES.items():
+        for alias in aliases:
+            if alias in index_by_name:
+                mapping[field] = index_by_name[alias]
+                break
+    if "job_link" not in mapping:
+        raise ValueError(
+            "Sheet header must include a Job link column "
+            f"(accepted names: {', '.join(HEADER_ALIASES['job_link'])})"
+        )
+    return mapping
+
+
 def parse_sheet_values(values: Sequence[Sequence[Any]]) -> list[JobRow]:
-    """Parse sheet grid values into JobRow list. Skips header and empty Job links."""
+    """Parse sheet grid values using header names. Skips empty Job links."""
     if not values:
         return []
 
+    columns = map_headers(values[0])
     rows: list[JobRow] = []
     for raw in values[1:]:
-        job_link = _cell(raw, COL_JOB_LINK)
+        job_link = _cell(raw, columns.get("job_link"))
         if not job_link:
             continue
         rows.append(
             JobRow(
-                sheet_row_id=_cell(raw, COL_ID),
-                saved_date=_cell(raw, COL_DATE),
-                company=_cell(raw, COL_COMPANY),
-                position=_cell(raw, COL_POSITION),
-                location=_cell(raw, COL_LOCATION),
+                sheet_row_id=_cell(raw, columns.get("sheet_row_id")),
+                saved_date=_cell(raw, columns.get("saved_date")),
+                company=_cell(raw, columns.get("company")),
+                position=_cell(raw, columns.get("position")),
+                location=_cell(raw, columns.get("location")),
                 job_link=job_link,
+                application_status=normalize_application_status(
+                    _cell(raw, columns.get("application_status"))
+                ),
+                notes=_cell(raw, columns.get("notes")),
+                interview_stage=normalize_interview_stage(
+                    _cell(raw, columns.get("interview_stage"))
+                ),
             )
         )
     return rows
