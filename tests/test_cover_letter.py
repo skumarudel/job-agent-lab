@@ -181,6 +181,8 @@ def test_rewrite_cover_letter_with_ollama_uses_chat_api():
     assert "data engineer" in user_prompt
     assert "analytics engineer" in user_prompt
     assert "data scientist" in user_prompt
+    assert "important skills" in user_prompt
+    assert "key requirements" in user_prompt
     system_prompt = captured["payload"]["messages"][0]["content"].lower()
     assert "data engineer" in system_prompt
 

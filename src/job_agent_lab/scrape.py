@@ -1,4 +1,4 @@
-"""Scrape job pages with Selenium and store heuristic summary/requirements."""
+"""Scrape job pages with Selenium and analyze requirements (Ollama or heuristic)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,22 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
+from job_agent_lab.analysis import (
+    JobAnalysis,
+    analyze_job_text_heuristic,
+    analyze_job_text_with_ollama,
+    job_analysis_provider,
+)
 from job_agent_lab.db import list_jobs_to_process, mark_job_error, mark_job_ready
 
 FetchHtml = Callable[[str], str]
+AnalyzeFn = Callable[[str], JobAnalysis]
 
 _REQUIREMENT_HINT = re.compile(
     r"\b("
@@ -97,7 +105,8 @@ def build_summary_and_requirements(text: str) -> tuple[str, list[str]]:
     """Build a short summary and requirement-like lines from page text.
 
     Heuristic only (no LLM): summary is the first substantial paragraph;
-    requirements are bullet-like or keyword-hinted lines.
+    requirements are bullet-like or keyword-hinted lines. Prefer
+    ``analyze_job_text_with_ollama`` for production summarization.
 
     Args:
         text: Visible text from ``html_to_visible_text``.
@@ -152,33 +161,53 @@ def process_pending_jobs(
     conn,
     *,
     fetch_html: FetchHtml | None = None,
+    analyze_text: AnalyzeFn | None = None,
+    provider: str | None = None,
+    ollama_client: httpx.Client | None = None,
 ) -> dict[str, list[str]]:
-    """Scrape and summarize all ``pending`` / ``error`` jobs on the connection.
+    """Scrape and analyze all ``pending`` / ``error`` jobs on the connection.
 
-    One job failure does not stop the batch. Successful jobs are marked
-    ``ready`` with ``summary`` and ``requirements_json``; failures become
-    ``error`` with ``error_message``. ``cover_letter`` is left unchanged.
+    Default analysis uses local Ollama into a Pydantic ``JobAnalysis``. Set
+    ``JOB_ANALYSIS_PROVIDER=heuristic`` (or ``provider='heuristic'``) for the
+    non-LLM path. One job failure does not stop the batch.
 
     Args:
         conn: Open SQLite connection from ``init_db``.
         fetch_html: Optional callable ``(url) -> html`` for tests. Defaults
             to ``fetch_rendered_html`` (Selenium).
+        analyze_text: Optional ``(page_text) -> JobAnalysis`` override.
+        provider: ``ollama`` or ``heuristic``; defaults to env.
+        ollama_client: Optional shared ``httpx.Client`` for Ollama calls.
 
     Returns:
         Dict with ``ready`` and ``error`` lists of ``job_id`` values processed
         in this run.
     """
     fetch = fetch_html or fetch_rendered_html
+    selected = (provider or job_analysis_provider()).strip().lower()
+
+    if analyze_text is not None:
+        analyzer: AnalyzeFn = analyze_text
+    elif selected == "heuristic":
+        analyzer = analyze_job_text_heuristic
+    elif selected == "ollama":
+
+        def analyzer(page_text: str) -> JobAnalysis:
+            return analyze_job_text_with_ollama(page_text, client=ollama_client)
+
+    else:
+        raise ValueError(f"unsupported job analysis provider: {selected!r}")
+
     result: dict[str, list[str]] = {"ready": [], "error": []}
 
     for job_id, job_link in list_jobs_to_process(conn):
         try:
             html = fetch(job_link)
             text = html_to_visible_text(html)
-            summary, requirements = build_summary_and_requirements(text)
-            mark_job_ready(conn, job_id, summary, requirements)
+            analysis = analyzer(text)
+            mark_job_ready(conn, job_id, analysis.summary, analysis)
             result["ready"].append(job_id)
-        except (WebDriverException, ValueError, OSError, RuntimeError) as exc:
+        except (WebDriverException, ValueError, OSError, RuntimeError, httpx.HTTPError) as exc:
             mark_job_error(conn, job_id, str(exc) or exc.__class__.__name__)
             result["error"].append(job_id)
         except Exception as exc:  # noqa: BLE001 — isolate unknown scrape failures

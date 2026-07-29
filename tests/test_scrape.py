@@ -1,5 +1,8 @@
 import json
 
+import httpx
+
+from job_agent_lab.analysis import JobAnalysis, analyze_job_text_with_ollama
 from job_agent_lab.db import (
     JobRow,
     init_db,
@@ -76,7 +79,9 @@ def test_process_pending_marks_ready_with_summary(tmp_path):
         assert url.endswith("/ok")
         return SAMPLE_HTML
 
-    result = process_pending_jobs(conn, fetch_html=fake_fetch)
+    result = process_pending_jobs(
+        conn, fetch_html=fake_fetch, provider="heuristic"
+    )
     assert result["ready"] == [job_id]
     assert result["error"] == []
 
@@ -87,8 +92,10 @@ def test_process_pending_marks_ready_with_summary(tmp_path):
     ).fetchone()
     assert row[0] == "ready"
     assert row[1] and "software engineer" in row[1].lower()
-    reqs = json.loads(row[2])
-    assert isinstance(reqs, list) and len(reqs) >= 1
+    payload = json.loads(row[2])
+    assert payload["key_requirements"]
+    assert payload["important_skills"]
+    assert payload["role_family"] == "Other"
     assert row[3] is None
     assert row[4] is None
     conn.close()
@@ -104,7 +111,9 @@ def test_process_isolates_failures_and_continues(tmp_path):
             raise RuntimeError("browser boom")
         return SAMPLE_HTML
 
-    result = process_pending_jobs(conn, fetch_html=fake_fetch)
+    result = process_pending_jobs(
+        conn, fetch_html=fake_fetch, provider="heuristic"
+    )
     assert set(result["ready"]) == {good_id}
     assert set(result["error"]) == {bad_id}
 
@@ -136,7 +145,9 @@ def test_process_skips_ready_and_retries_error(tmp_path):
         calls.append(url)
         return SAMPLE_HTML
 
-    result = process_pending_jobs(conn, fetch_html=fake_fetch)
+    result = process_pending_jobs(
+        conn, fetch_html=fake_fetch, provider="heuristic"
+    )
     assert calls == ["https://example.com/jobs/retry"]
     assert result["ready"] == [error_id]
 
@@ -152,7 +163,9 @@ def test_empty_page_text_marks_error(tmp_path):
     job_id = _insert(conn, "https://example.com/jobs/empty")
 
     result = process_pending_jobs(
-        conn, fetch_html=lambda _url: "<html><body><script>x</script></body></html>"
+        conn,
+        fetch_html=lambda _url: "<html><body><script>x</script></body></html>",
+        provider="heuristic",
     )
     assert result["error"] == [job_id]
     status, message = conn.execute(
@@ -161,3 +174,68 @@ def test_empty_page_text_marks_error(tmp_path):
     assert status == "error"
     assert message
     conn.close()
+
+
+def test_process_with_ollama_analysis_stores_structured_json(tmp_path):
+    conn = init_db(tmp_path / "jobs.db")
+    job_id = _insert(conn, "https://example.com/jobs/llm")
+
+    payload = {
+        "summary": "Build data platforms.",
+        "key_requirements": ["Python pipelines", "SQL warehousing"],
+        "important_skills": ["Python", "Airflow", "SQL"],
+        "role_family": "Data Engineer",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"message": {"role": "assistant", "content": json.dumps(payload)}},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = process_pending_jobs(
+            conn,
+            fetch_html=lambda _url: SAMPLE_HTML,
+            provider="ollama",
+            ollama_client=client,
+        )
+
+    assert result["ready"] == [job_id]
+    row = conn.execute(
+        "SELECT summary, requirements_json, status FROM jobs WHERE job_id = ?",
+        (job_id,),
+    ).fetchone()
+    assert row[0] == "Build data platforms."
+    assert json.loads(row[1]) == payload
+    assert row[2] == "ready"
+    conn.close()
+
+
+def test_analyze_job_text_with_ollama_validates_pydantic():
+    payload = {
+        "summary": "Analytics role focused on dbt models.",
+        "key_requirements": ["dbt experience", "SQL fluency"],
+        "important_skills": ["dbt", "SQL", "Looker"],
+        "role_family": "Analytics Engineer",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        assert body["format"] == "json"
+        assert body["model"] == "gemma4:e4b-mlx"
+        return httpx.Response(
+            200,
+            json={"message": {"role": "assistant", "content": json.dumps(payload)}},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        analysis = analyze_job_text_with_ollama(
+            "Job posting about analytics engineering",
+            model="ollama_chat/gemma4:e4b-mlx",
+            client=client,
+        )
+
+    assert isinstance(analysis, JobAnalysis)
+    assert analysis.role_family == "Analytics Engineer"
+    assert "dbt" in analysis.important_skills
