@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 import json
 import sqlite3
 
@@ -180,7 +181,7 @@ def mark_job_ready(
     conn: sqlite3.Connection,
     job_id: str,
     summary: str,
-    requirements: list[str],
+    requirements: list[str] | dict | Any,
 ) -> None:
     """Store summary/requirements and set pipeline status to ``ready``.
 
@@ -191,9 +192,15 @@ def mark_job_ready(
         conn: Open connection from ``init_db``.
         job_id: Primary key of the job to update.
         summary: Short text summary of the posting.
-        requirements: Structured requirement strings stored as JSON.
+        requirements: Either a list of requirement strings (legacy) or a
+            structured mapping / Pydantic ``model_dump()`` payload stored as
+            JSON (preferred: ``JobAnalysis`` fields).
     """
     now = datetime.now(timezone.utc).isoformat()
+    if hasattr(requirements, "model_dump"):
+        payload = requirements.model_dump()
+    else:
+        payload = requirements
     conn.execute(
         """
         UPDATE jobs
@@ -204,7 +211,7 @@ def mark_job_ready(
             updated_at = ?
         WHERE job_id = ?
         """,
-        (summary, json.dumps(requirements), now, job_id),
+        (summary, json.dumps(payload), now, job_id),
     )
     conn.commit()
 

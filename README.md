@@ -22,7 +22,7 @@ Share the sheet with the service account email (Viewer). Unit tests mock the She
 
 ## Scraping (local live use)
 
-Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Unit tests mock the fetch and do not need a browser. For a real scrape you need Chrome installed; Selenium Manager resolves the driver.
+Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Page text is summarized with **local Ollama** into a Pydantic `JobAnalysis` (`summary`, `key_requirements`, `important_skills`, `role_family`). Set `JOB_ANALYSIS_PROVIDER=heuristic` for the non-LLM path. Unit tests mock fetch/Ollama and do not need a browser or Ollama server.
 
 ## Cover letter
 
@@ -32,8 +32,10 @@ By default letters are rewritten with a **local Ollama** model (`COVER_LETTER_PR
 
 - `OLLAMA_API_BASE=http://localhost:11434`
 - `OLLAMA_MODEL=ollama_chat/gemma4:e4b-mlx`
+- `JOB_ANALYSIS_PROVIDER=ollama`
+- `COVER_LETTER_PROVIDER=ollama`
 
-The rewrite prompt steers toward the lab's three target role families: **Data Engineer**, **Analytics Engineer**, and **Data Scientist** (closest match from the posting; still no invented experience).
+The cover-letter prompt uses the structured job analysis (requirements + important skills + role family) together with the base letter. Still no invented experience.
 
 Use `COVER_LETTER_PROVIDER=heuristic` for the non-LLM template path. Unit tests mock Ollama HTTP and do not need a running server.
 

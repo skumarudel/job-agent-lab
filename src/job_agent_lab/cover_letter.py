@@ -2,22 +2,40 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import httpx
 from docx import Document
 
+from job_agent_lab.analysis import JobAnalysis, parse_stored_job_analysis
 from job_agent_lab.db import list_jobs_needing_cover_letter, update_cover_letter
+from job_agent_lab.ollama_util import (
+    DEFAULT_OLLAMA_API_BASE,
+    DEFAULT_OLLAMA_MODEL,
+    normalize_ollama_model,
+    ollama_chat,
+)
 
 DEFAULT_COVER_LETTER_PATH = Path("assets/cover_letter.docx")
-DEFAULT_OLLAMA_API_BASE = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "ollama_chat/gemma4:e4b-mlx"
 
 RewriteFn = Callable[..., str]
+
+# Re-export for callers/tests that imported these from this module.
+__all__ = [
+    "DEFAULT_COVER_LETTER_PATH",
+    "DEFAULT_OLLAMA_API_BASE",
+    "DEFAULT_OLLAMA_MODEL",
+    "TARGET_ROLE_FAMILIES",
+    "build_ollama_rewrite_prompt",
+    "cover_letter_provider",
+    "load_base_cover_letter",
+    "normalize_ollama_model",
+    "process_cover_letters",
+    "rewrite_cover_letter_with_ollama",
+    "tailor_cover_letter",
+]
 
 
 def load_base_cover_letter(path: str | Path = DEFAULT_COVER_LETTER_PATH) -> str:
@@ -44,22 +62,6 @@ def load_base_cover_letter(path: str | Path = DEFAULT_COVER_LETTER_PATH) -> str:
     return "\n\n".join(paragraphs)
 
 
-def normalize_ollama_model(model: str) -> str:
-    """Strip LiteLLM-style prefixes so Ollama receives a native model tag.
-
-    Args:
-        model: Model id such as ``ollama_chat/gemma4:e4b-mlx`` or ``gemma4:e4b-mlx``.
-
-    Returns:
-        Model tag for the Ollama API (e.g. ``gemma4:e4b-mlx``).
-    """
-    name = (model or "").strip()
-    for prefix in ("ollama_chat/", "ollama/"):
-        if name.startswith(prefix):
-            return name[len(prefix) :]
-    return name
-
-
 def cover_letter_provider() -> str:
     """Return the configured cover-letter provider from the environment.
 
@@ -81,20 +83,21 @@ def tailor_cover_letter(
     position: str,
     requirements: list[str] | None = None,
     summary: str = "",
+    analysis: JobAnalysis | None = None,
 ) -> str:
     """Build a tailored letter from the base text plus job metadata (no LLM).
 
     Keeps the base letter body intact. Adds an application-specific opening
     that names company/position and optional interest lines drawn from the
-    posting requirements. Does not invent work experience beyond the base.
+    posting analysis. Does not invent work experience beyond the base.
 
     Args:
         base_text: Full text from ``load_base_cover_letter``.
         company: Employer name from the sheet/DB.
         position: Role title from the sheet/DB.
         requirements: Optional requirement strings from the posting.
-        summary: Optional job summary (unused by the heuristic path; accepted
-            for a shared call signature with the Ollama rewriter).
+        summary: Optional job summary (shared signature with Ollama rewriter).
+        analysis: Optional structured ``JobAnalysis`` (preferred when present).
 
     Returns:
         Tailored cover letter text.
@@ -102,24 +105,32 @@ def tailor_cover_letter(
     Raises:
         ValueError: If ``base_text`` is empty/whitespace-only.
     """
-    _ = summary  # shared signature with LLM rewriter
+    _ = summary
     body = (base_text or "").strip()
     if not body:
         raise ValueError("base cover letter text is empty")
 
     company_label = (company or "").strip() or "your company"
     position_label = (position or "").strip() or "this role"
-
     opening = (
         f"I am writing to apply for the {position_label} position at "
         f"{company_label}."
     )
 
+    interest_source = list(requirements or [])
+    if analysis is not None:
+        interest_source = list(analysis.key_requirements) + list(analysis.important_skills)
+
     interest_lines: list[str] = []
-    for item in requirements or []:
+    seen: set[str] = set()
+    for item in interest_source:
         cleaned = (item or "").strip()
         if len(cleaned) < 12:
             continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
         interest_lines.append(cleaned)
         if len(interest_lines) >= 3:
             break
@@ -135,7 +146,6 @@ def tailor_cover_letter(
     return "\n\n".join(parts)
 
 
-# Target role families for this lab's job applications.
 TARGET_ROLE_FAMILIES = (
     "Data Engineer",
     "Analytics Engineer",
@@ -150,26 +160,38 @@ def build_ollama_rewrite_prompt(
     position: str,
     summary: str = "",
     requirements: list[str] | None = None,
+    analysis: JobAnalysis | None = None,
 ) -> str:
     """Build the user prompt for an Ollama cover-letter rewrite.
 
-    The prompt steers wording toward one of the lab's target role families
-    (Data Engineer, Analytics Engineer, Data Scientist) based on the posting,
-    without inventing experience beyond the base letter.
+    Prefers a structured ``JobAnalysis`` from the scrape step when provided.
 
     Args:
         base_text: Base letter text (source of allowed experience).
         company: Employer name.
         position: Role title.
-        summary: Job posting summary.
-        requirements: Structured requirements from the posting.
+        summary: Job posting summary (used if ``analysis`` is omitted).
+        requirements: Legacy requirement string list.
+        analysis: Preferred structured analysis from the scrape step.
 
     Returns:
         Prompt string for the chat ``user`` message.
     """
-    req_block = "\n".join(f"- {item}" for item in (requirements or []) if str(item).strip())
+    if analysis is not None:
+        summary_text = analysis.summary
+        req_block = "\n".join(f"- {item}" for item in analysis.key_requirements)
+        skills_block = "\n".join(f"- {item}" for item in analysis.important_skills)
+        role_family = analysis.role_family
+    else:
+        summary_text = (summary or "").strip() or "(none)"
+        req_block = "\n".join(
+            f"- {item}" for item in (requirements or []) if str(item).strip()
+        )
+        skills_block = "- (none provided)"
+        role_family = "unknown"
     if not req_block:
         req_block = "- (none provided)"
+
     families = ", ".join(TARGET_ROLE_FAMILIES)
     return (
         "Rewrite the cover letter for this job application.\n"
@@ -178,21 +200,21 @@ def build_ollama_rewrite_prompt(
         "- Do NOT invent employers, degrees, titles, or achievements.\n"
         "- Customize wording for the company and position.\n"
         f"- This applicant targets three role families only: {families}.\n"
-        "- Infer which family best matches this posting from the position title, "
-        "summary, and requirements (pick the closest one; if unclear, prefer the "
-        "family whose themes appear most in the base letter).\n"
+        "- Prefer the analyzed role_family when aligning emphasis; if it is Other, "
+        "infer the closest family from the position and analysis.\n"
         "- Emphasize language and themes appropriate to that family, for example:\n"
         "  - Data Engineer: pipelines, ETL/ELT, warehousing, orchestration, reliability\n"
         "  - Analytics Engineer: dbt/modeling, semantic layers, analytics-ready data\n"
         "  - Data Scientist: modeling/analysis, experimentation, statistical insight\n"
-        "- Only use those themes if they are already supported by the base letter; "
-        "do not fabricate skills to fit the family.\n"
-        "- You may reference the summary/requirements only to align emphasis.\n"
+        "- Use the job analysis summary, key requirements, and important skills only "
+        "to choose emphasis; do not claim skills absent from the base letter.\n"
         "- Return only the final cover letter text (no preamble).\n\n"
         f"Company: {(company or '').strip() or 'unknown'}\n"
         f"Position: {(position or '').strip() or 'unknown'}\n"
-        f"Summary:\n{(summary or '').strip() or '(none)'}\n\n"
-        f"Requirements:\n{req_block}\n\n"
+        f"Analyzed role family: {role_family}\n"
+        f"Job analysis summary:\n{summary_text}\n\n"
+        f"Key requirements:\n{req_block}\n\n"
+        f"Important skills:\n{skills_block}\n\n"
         f"Base letter:\n{base_text.strip()}\n"
     )
 
@@ -204,6 +226,7 @@ def rewrite_cover_letter_with_ollama(
     position: str,
     summary: str = "",
     requirements: list[str] | None = None,
+    analysis: JobAnalysis | None = None,
     api_base: str | None = None,
     model: str | None = None,
     client: httpx.Client | None = None,
@@ -216,10 +239,10 @@ def rewrite_cover_letter_with_ollama(
         company: Employer name.
         position: Role title.
         summary: Job summary from SQLite.
-        requirements: Requirement strings from SQLite.
+        requirements: Requirement strings from SQLite (legacy).
+        analysis: Structured ``JobAnalysis`` from the scrape step (preferred).
         api_base: Ollama base URL (env ``OLLAMA_API_BASE`` if omitted).
-        model: Model id (env ``OLLAMA_MODEL`` if omitted). May include
-            ``ollama_chat/`` prefix.
+        model: Model id (env ``OLLAMA_MODEL`` if omitted).
         client: Optional ``httpx.Client`` (tests inject a mock transport).
         timeout: Request timeout in seconds.
 
@@ -233,18 +256,8 @@ def rewrite_cover_letter_with_ollama(
     if not (base_text or "").strip():
         raise ValueError("base cover letter text is empty")
 
-    base = (api_base or os.environ.get("OLLAMA_API_BASE") or DEFAULT_OLLAMA_API_BASE).rstrip(
-        "/"
-    )
-    raw_model = model or os.environ.get("OLLAMA_MODEL") or DEFAULT_OLLAMA_MODEL
-    ollama_model = normalize_ollama_model(raw_model)
-    if not ollama_model:
-        raise ValueError("OLLAMA_MODEL is empty")
-
-    payload: dict[str, Any] = {
-        "model": ollama_model,
-        "stream": False,
-        "messages": [
+    return ollama_chat(
+        messages=[
             {
                 "role": "system",
                 "content": (
@@ -261,27 +274,15 @@ def rewrite_cover_letter_with_ollama(
                     position=position,
                     summary=summary,
                     requirements=requirements,
+                    analysis=analysis,
                 ),
             },
         ],
-    }
-
-    url = f"{base}/api/chat"
-    if client is None:
-        with httpx.Client(timeout=timeout) as owned:
-            response = owned.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-    else:
-        response = client.post(url, json=payload, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-
-    message = data.get("message") or {}
-    content = (message.get("content") or "").strip()
-    if not content:
-        raise ValueError("Ollama returned an empty cover letter")
-    return content
+        api_base=api_base,
+        model=model,
+        client=client,
+        timeout=timeout,
+    )
 
 
 def process_cover_letters(
@@ -294,17 +295,14 @@ def process_cover_letters(
 ) -> dict[str, list[str]]:
     """Write tailored cover letters for ready jobs that are missing one.
 
-    Loads the base ``.docx`` once. Failures for individual jobs are collected
-    and do not stop the batch. Pipeline ``status`` is left as ``ready`` so a
-    letter failure does not re-trigger scraping.
+    Uses stored job analysis (summary + structured requirements JSON) as input
+    to the rewriter together with the base letter.
 
     Args:
         conn: Open SQLite connection from ``init_db``.
         base_letter_path: Path to ``assets/cover_letter.docx`` (or a test fixture).
         provider: ``ollama`` or ``heuristic``. Defaults to ``COVER_LETTER_PROVIDER``.
-        rewrite_fn: Optional callable used instead of the built-in rewriter
-            (tests). Signature matches ``tailor_cover_letter`` /
-            ``rewrite_cover_letter_with_ollama`` keyword args.
+        rewrite_fn: Optional callable override for tests.
         ollama_client: Optional shared ``httpx.Client`` for Ollama calls.
 
     Returns:
@@ -335,6 +333,7 @@ def process_cover_letters(
             position: str,
             requirements: list[str] | None = None,
             summary: str = "",
+            analysis: JobAnalysis | None = None,
         ) -> str:
             return rewrite_cover_letter_with_ollama(
                 text,
@@ -342,6 +341,7 @@ def process_cover_letters(
                 position=position,
                 summary=summary,
                 requirements=requirements,
+                analysis=analysis,
                 client=ollama_client,
             )
 
@@ -350,18 +350,14 @@ def process_cover_letters(
 
     for job_id, company, position, summary, requirements_json in jobs:
         try:
-            try:
-                requirements = json.loads(requirements_json or "[]")
-            except json.JSONDecodeError:
-                requirements = []
-            if not isinstance(requirements, list):
-                requirements = []
+            analysis = parse_stored_job_analysis(summary or "", requirements_json or "[]")
             letter = rewriter(
                 base_text,
                 company=company,
                 position=position,
-                requirements=[str(item) for item in requirements],
-                summary=summary or "",
+                requirements=list(analysis.key_requirements),
+                summary=analysis.summary,
+                analysis=analysis,
             )
             if not (letter or "").strip():
                 raise ValueError("cover letter rewriter returned empty text")
