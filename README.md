@@ -24,6 +24,26 @@ uv run job-agent-lab show <job_id>
 
 Default DB path is `data/jobs.db` (created on first run). Override with `--db` or `JOB_AGENT_DB_PATH`. Loads `.env` automatically for Google/Ollama settings.
 
+## Interactive apply chat (Google ADK Web)
+
+After the DB has jobs (from `run`), polish a cover letter in the ADK browser chat UI — **not Streamlit**. The agent loads job analysis + draft from SQLite, plus `assets/cover_letter.docx` and your resume (`assets/resume.md` by default / `RESUME_PATH`).
+
+```bash
+# From repo root (package installed via uv)
+uv sync --dev
+uv run adk web apply_agents
+```
+
+Open the printed URL, then pick an agent:
+
+| Agent | Model path |
+|-------|------------|
+| `apply_ollama` | Local Ollama (`APPLY_MODEL_OLLAMA`, default `ollama_chat/gemma4:e4b-mlx`) |
+| `apply_claude` | AWS Bedrock Claude (`APPLY_MODEL_CLAUDE`) |
+| `apply_qwen` | AWS Bedrock Qwen (`APPLY_MODEL_QWEN`) |
+
+Ask the agent to list Not-applied jobs, load one `job_id`, brainstorm for several turns, then save the final letter. Bedrock agents need AWS credentials/region and model access in your account (override model ids in `.env`).
+
 ## Google Sheets (optional for local use)
 
 Copy `.env.example` to `.env` and set:
