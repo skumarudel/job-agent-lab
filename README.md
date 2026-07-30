@@ -1,79 +1,103 @@
 # job-agent-lab
 
-Automate preparing job applications from links saved in a Google Sheet: scrape each posting, extract what the role requires, generate a tailored cover letter from a base letter, store results locally, and expose a CLI so you can apply the next day with everything ready.
+Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat before you apply.
 
-## Development
+## End-to-end workflow
 
-Requires [uv](https://docs.astral.sh/uv/).
+```text
+Google Sheet
+    │
+    ▼
+job-agent-lab run          ← batch (CLI)
+    │  1. Sync all sheet rows into SQLite (metadata)
+    │  2. For Status = Not applied only:
+    │       scrape page (Selenium)
+    │       → Ollama JobAnalysis (summary, requirements, skills)
+    │       → first-pass cover letter (base docx + analysis)
+    │
+    ▼
+data/jobs.db
+    │
+    ▼
+adk web apply_agents       ← interactive (Google ADK Web)
+    │  pick apply_ollama / apply_claude / apply_qwen
+    │  load job from DB + resume + base letter
+    │  multi-turn polish → save final letter to DB
+    │
+    ▼
+You apply on the employer site (manual)
+```
+
+**Applied** sheet rows are stored/updated as metadata only — no scrape, analysis, or letter.
+
+## Quick start
 
 ```bash
 uv sync --dev
-uv run pytest
+cp .env.example .env   # fill Google + Ollama (and AWS if using Bedrock agents)
 ```
 
-## CLI
+Replace placeholders:
+
+- `assets/cover_letter.docx` — your base letter  
+- `assets/resume.md` — your resume (`.md` / `.txt` / `.docx`; or set `RESUME_PATH`)
+
+### 1) Batch pipeline
+
+Needs: `.env` Google vars, sheet shared with the service account, Chrome, Ollama (for analysis/letter).
 
 ```bash
-# Full pipeline: sheet sync → scrape/analyze → cover letters
 uv run job-agent-lab run
-
-# Inspect results
 uv run job-agent-lab list
 uv run job-agent-lab show <job_id>
 ```
 
-Default DB path is `data/jobs.db` (created on first run). Override with `--db` or `JOB_AGENT_DB_PATH`. Loads `.env` automatically for Google/Ollama settings.
+DB default: `data/jobs.db` (`--db` or `JOB_AGENT_DB_PATH`).
 
-## Interactive apply chat (Google ADK Web)
-
-After the DB has jobs (from `run`), polish a cover letter in the ADK browser chat UI — **not Streamlit**. The agent loads job analysis + draft from SQLite, plus `assets/cover_letter.docx` and your resume (`assets/resume.md` by default / `RESUME_PATH`).
+### 2) Interactive polish (ADK Web)
 
 ```bash
-# From repo root (package installed via uv)
-uv sync --dev
 uv run adk web apply_agents
 ```
 
-Open the printed URL, then pick an agent:
+Open the URL → select an agent:
 
-| Agent | Model path |
-|-------|------------|
-| `apply_ollama` | Local Ollama (`APPLY_MODEL_OLLAMA`, default `ollama_chat/gemma4:e4b-mlx`) |
-| `apply_claude` | AWS Bedrock Claude (`APPLY_MODEL_CLAUDE`) |
-| `apply_qwen` | AWS Bedrock Qwen (`APPLY_MODEL_QWEN`) |
+| Agent | Backend |
+|-------|---------|
+| `apply_ollama` | Local Ollama |
+| `apply_claude` | AWS Bedrock Claude |
+| `apply_qwen` | AWS Bedrock Qwen |
 
-Ask the agent to list Not-applied jobs, load one `job_id`, brainstorm for several turns, then save the final letter. Bedrock agents need AWS credentials/region and model access in your account (override model ids in `.env`).
+Example prompts: list Not-applied jobs → load a `job_id` → revise the letter → save it to the DB.
 
-## Google Sheets (optional for local use)
+## Config (`.env`)
 
-Copy `.env.example` to `.env` and set:
+| Area | Vars |
+|------|------|
+| Sheets | `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID` |
+| Batch LLM | `OLLAMA_API_BASE`, `OLLAMA_MODEL`, `JOB_ANALYSIS_PROVIDER`, `COVER_LETTER_PROVIDER` |
+| DB / assets | `JOB_AGENT_DB_PATH`, `RESUME_PATH`, `BASE_COVER_LETTER_PATH` |
+| ADK models | `APPLY_MODEL_OLLAMA`, `APPLY_MODEL_CLAUDE`, `APPLY_MODEL_QWEN`, `AWS_REGION` |
 
-- `GOOGLE_SERVICE_ACCOUNT_FILE` — path to the service account JSON
-- `GOOGLE_SHEET_ID` — spreadsheet ID
+See `.env.example`. Never commit `.env` or credential JSON.
 
-Share the sheet with the service account email (Viewer). Unit tests mock the Sheets API and do not need credentials.
+## Layout (mental model)
 
-## Scraping (local live use)
+| Path | Role |
+|------|------|
+| `src/job_agent_lab/` | Library: sheets, scrape, analysis, cover letter, CLI, ADK tools |
+| `apply_agents/` | ADK Web entrypoints (`apply_ollama`, …) |
+| `assets/` | Base cover letter + resume |
+| `data/jobs.db` | Local SQLite (gitignored) |
 
-Pending jobs are scraped with **headless Chrome via Selenium** (JavaScript-rendered boards). Page text is summarized with **local Ollama** into a Pydantic `JobAnalysis` (`summary`, `key_requirements`, `important_skills`, `role_family`). Set `JOB_ANALYSIS_PROVIDER=heuristic` for the non-LLM path. Unit tests mock fetch/Ollama and do not need a browser or Ollama server.
+## Tests / CI
 
-Sheet **Status**: all rows are synced into SQLite (insert/update metadata). Scrape, analysis, and cover letters run only for **Not applied** jobs; **Applied** jobs stay metadata-only.
+```bash
+uv run pytest
+```
 
-## Cover letter
+CI runs the same on PRs and pushes to `main`. Unit tests mock Google, browsers, and LLMs.
 
-Base letter lives at `assets/cover_letter.docx` (replace with your own).
+## Out of scope (for now)
 
-By default letters are rewritten with a **local Ollama** model (`COVER_LETTER_PROVIDER=ollama`). Set in `.env`:
-
-- `OLLAMA_API_BASE=http://localhost:11434`
-- `OLLAMA_MODEL=ollama_chat/gemma4:e4b-mlx`
-- `JOB_ANALYSIS_PROVIDER=ollama`
-- `COVER_LETTER_PROVIDER=ollama`
-
-The cover-letter prompt uses the structured job analysis (requirements + important skills + role family) together with the base letter. Still no invented experience.
-
-Use `COVER_LETTER_PROVIDER=heuristic` for the non-LLM template path. Unit tests mock Ollama HTTP and do not need a running server.
-
-## CI
-
-Pull requests and pushes to `main` run the same test command on GitHub Actions (see `.github/workflows/ci.yml`).
+Auto-apply, writing Status back to the sheet, cloud hosting, custom FastAPI UI (ADK Web is the chat UI; FastAPI inside ADK is not a separate app in this repo).
