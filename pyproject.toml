@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "google-adk[extensions]>=2.5.0",
     "google-api-python-client>=2.198.0",
     "google-auth>=2.56.2",
     "httpx>=0.28.1",
