@@ -1,6 +1,6 @@
 # job-agent-lab
 
-Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat before you apply.
+Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat or practice a typed phone screen before you apply.
 
 ## End-to-end workflow
 
@@ -28,6 +28,15 @@ adk web apply_agents       ← interactive (Google ADK Web)
 You apply on the employer site (manual)
 ```
 
+Phone screen (separate chat, not part of the nightly run):
+
+```text
+adk web interview_agents
+    upload resume PDF + fill assets/interview_brief.md
+    Bedrock Claude Haiku asks one question at a time
+    debrief at the end (no job URL, no sheet write, no transcript saved)
+```
+
 **Applied** sheet rows are stored/updated as metadata only — no scrape, analysis, or letter.
 
 ## Quick start
@@ -40,7 +49,8 @@ cp .env.example .env   # fill Google + Ollama (and AWS if using Bedrock agents)
 Replace placeholders:
 
 - `assets/cover_letter.docx` — your base letter  
-- `assets/resume.md` — your resume (`.md` / `.txt` / `.docx`; or set `RESUME_PATH`)
+- `assets/resume.md` — your resume (`.md` / `.txt` / `.docx` for cover-letter chat; the phone screen also accepts `.pdf`, or set `RESUME_PATH`)
+- `assets/interview_brief.md` — phone-screen context: company name, job title, main job responsibilities, company culture, and business stream
 
 ### 1) Batch pipeline
 
@@ -70,14 +80,24 @@ Open the URL → select an agent:
 
 Example prompts: list Not-applied jobs → load a `job_id` → revise the letter → save it to the DB.
 
+### 3) Typed phone screen (ADK Web)
+
+Needs AWS credentials that can call Bedrock, and Claude Haiku 4.5 enabled in the account (`INTERVIEW_MODEL` overrides the default id).
+
+```bash
+uv run adk web interview_agents
+```
+
+Open the URL → select `phone_screen`. Upload a resume PDF (or give a file path; `RESUME_PATH` is the fallback) and fill in [assets/interview_brief.md](assets/interview_brief.md) — company name, job title, main job responsibilities, company culture, and business stream. You can paste those sections in chat instead of editing the file. The interviewer asks one question per turn from that brief and your resume. Say you are done for a short debrief. This chat does not open a job URL, and it does not change the nightly pipeline or the sheet.
+
 ## Config (`.env`)
 
 | Area | Vars |
 |------|------|
 | Sheets | `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID` |
 | Batch LLM | `OLLAMA_API_BASE`, `OLLAMA_MODEL`, `JOB_ANALYSIS_PROVIDER`, `COVER_LETTER_PROVIDER` |
-| DB / assets | `JOB_AGENT_DB_PATH`, `RESUME_PATH`, `BASE_COVER_LETTER_PATH` |
-| ADK models | `APPLY_MODEL_OLLAMA`, `APPLY_MODEL_CLAUDE`, `APPLY_MODEL_QWEN`, `AWS_REGION` |
+| DB / assets | `JOB_AGENT_DB_PATH`, `RESUME_PATH`, `BASE_COVER_LETTER_PATH`, `INTERVIEW_BRIEF_PATH` |
+| ADK models | `APPLY_MODEL_OLLAMA`, `APPLY_MODEL_CLAUDE`, `APPLY_MODEL_QWEN`, `INTERVIEW_MODEL`, `AWS_REGION` |
 
 See `.env.example`. Never commit `.env` or credential JSON.
 
@@ -87,7 +107,8 @@ See `.env.example`. Never commit `.env` or credential JSON.
 |------|------|
 | `src/job_agent_lab/` | Library: sheets, scrape, analysis, cover letter, CLI, ADK tools |
 | `apply_agents/` | ADK Web entrypoints (`apply_ollama`, …) |
-| `assets/` | Base cover letter + resume |
+| `interview_agents/` | ADK Web phone screen (`phone_screen`) |
+| `assets/` | Base cover letter, resume, and interview brief |
 | `data/jobs.db` | Local SQLite (gitignored) |
 
 ## Tests / CI
