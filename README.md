@@ -1,6 +1,6 @@
 # job-agent-lab
 
-Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat or practice a typed phone screen before you apply.
+Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat or practice a typed phone screen or technical interview before you apply.
 
 ## End-to-end workflow
 
@@ -33,6 +33,7 @@ Phone screen (separate chat, not part of the nightly run):
 ```text
 adk web interview_agents
     upload resume PDF + fill assets/interview_brief.md
+    select phone_screen or technical
     Bedrock Claude Haiku asks one question at a time
     debrief at the end (no job URL, no sheet write, no transcript saved)
 ```
@@ -50,7 +51,7 @@ Replace placeholders:
 
 - `assets/cover_letter.docx` — your base letter  
 - `assets/resume.md` — your resume (`.md` / `.txt` / `.docx` for cover-letter chat; the phone screen also accepts `.pdf`, or set `RESUME_PATH`)
-- `assets/interview_brief.md` — phone-screen context: company name, job title, main job responsibilities, company culture, and business stream
+- `assets/interview_brief.md` — interview context: company name, job title, main job responsibilities, company culture, and business stream
 
 ### 1) Batch pipeline
 
@@ -80,7 +81,7 @@ Open the URL → select an agent:
 
 Example prompts: list Not-applied jobs → load a `job_id` → revise the letter → save it to the DB.
 
-### 3) Typed phone screen (ADK Web)
+### 3) Typed interviews (ADK Web)
 
 Needs AWS credentials that can call Bedrock, and Claude Haiku 4.5 enabled in the account (`INTERVIEW_MODEL` overrides the default id).
 
@@ -88,7 +89,14 @@ Needs AWS credentials that can call Bedrock, and Claude Haiku 4.5 enabled in the
 uv run adk web interview_agents
 ```
 
-Open the URL → select `phone_screen`. Upload a resume PDF (or give a file path; `RESUME_PATH` is the fallback) and fill in [assets/interview_brief.md](assets/interview_brief.md) — company name, job title, main job responsibilities, company culture, and business stream. You can paste those sections in chat instead of editing the file. The interviewer asks one question per turn from that brief and your resume. Say you are done for a short debrief. This chat does not open a job URL, and it does not change the nightly pipeline or the sheet.
+Open the URL and select a chat:
+
+| Chat | What it does |
+|------|----------------|
+| `phone_screen` | Recruiter-style screen: intro, resume walkthrough, culture, business stream |
+| `technical` | Deeper design and debugging questions from the same resume and brief |
+
+Upload a resume PDF (or give a file path; `RESUME_PATH` is the fallback) and fill in [assets/interview_brief.md](assets/interview_brief.md) — company name, job title, main job responsibilities, company culture, and business stream. You can paste those sections in chat instead of editing the file. The interviewer asks one question per turn. On `technical`, a tool or domain that is in the brief but not on the resume is asked as a hypothetical, not as listed experience. Say you are done for a short debrief. These chats do not open a job URL, and they do not change the nightly pipeline or the sheet.
 
 ## Config (`.env`)
 
@@ -107,7 +115,7 @@ See `.env.example`. Never commit `.env` or credential JSON.
 |------|------|
 | `src/job_agent_lab/` | Library: sheets, scrape, analysis, cover letter, CLI, ADK tools |
 | `apply_agents/` | ADK Web entrypoints (`apply_ollama`, …) |
-| `interview_agents/` | ADK Web phone screen (`phone_screen`) |
+| `interview_agents/` | ADK Web interviews (`phone_screen`, `technical`) |
 | `assets/` | Base cover letter, resume, and interview brief |
 | `data/jobs.db` | Local SQLite (gitignored) |
 
