@@ -19,7 +19,7 @@ job-agent-lab run          ← batch (CLI)
 data/jobs.db
     │
     ▼
-adk web apply_agents       ← interactive (Google ADK Web)
+adk web job_application_agents   ← interactive (Google ADK Web)
     │  pick apply_ollama / apply_claude / apply_qwen
     │  load job from DB + resume + base letter
     │  multi-turn polish → save final letter to DB
@@ -68,7 +68,7 @@ DB default: `data/jobs.db` (`--db` or `JOB_AGENT_DB_PATH`).
 ### 2) Interactive polish (ADK Web)
 
 ```bash
-uv run adk web apply_agents
+uv run adk web job_application_agents
 ```
 
 Open the URL → select an agent:
@@ -115,7 +115,7 @@ See `.env.example`. Never commit `.env` or credential JSON.
 | Path | Role |
 |------|------|
 | `src/job_agent_lab/` | Library: sheets, scrape, analysis, cover letter, CLI, ADK tools |
-| `apply_agents/` | ADK Web entrypoints (`apply_ollama`, …) |
+| `job_application_agents/` | ADK Web cover-letter chats (`apply_ollama`, `apply_claude`, `apply_qwen`) |
 | `interview_agents/` | ADK Web interviews (`phone_screen`, `technical`, `behavioral`) |
 | `assets/` | Base cover letter, resume, and interview brief |
 | `data/jobs.db` | Local SQLite (gitignored) |
