@@ -33,3 +33,6 @@ build/
 .idea/
 .vscode/
 .cursor/
+
+# ADK Web local session data
+.adk/
