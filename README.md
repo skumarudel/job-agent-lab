@@ -1,6 +1,6 @@
 # job-agent-lab
 
-Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat or practice a typed phone screen or technical interview before you apply.
+Local lab that turns Google Sheet job links into stored analyses and cover letters, then lets you polish a letter in chat or practice a typed phone screen, technical interview, or behavioral interview before you apply.
 
 ## End-to-end workflow
 
@@ -33,7 +33,7 @@ Phone screen (separate chat, not part of the nightly run):
 ```text
 adk web interview_agents
     upload resume PDF + fill assets/interview_brief.md
-    select phone_screen or technical
+    select phone_screen, technical, or behavioral
     Bedrock Claude Haiku asks one question at a time
     debrief at the end (no job URL, no sheet write, no transcript saved)
 ```
@@ -95,6 +95,7 @@ Open the URL and select a chat:
 |------|----------------|
 | `phone_screen` | Recruiter-style screen: intro, resume walkthrough, culture, business stream |
 | `technical` | Deeper design and debugging questions from the same resume and brief |
+| `behavioral` | Real situations from the resume, shaped by the culture and the role |
 
 Upload a resume PDF (or give a file path; `RESUME_PATH` is the fallback) and fill in [assets/interview_brief.md](assets/interview_brief.md) — company name, job title, main job responsibilities, company culture, and business stream. You can paste those sections in chat instead of editing the file. The interviewer asks one question per turn. On `technical`, a tool or domain that is in the brief but not on the resume is asked as a hypothetical, not as listed experience. Say you are done for a short debrief. These chats do not open a job URL, and they do not change the nightly pipeline or the sheet.
 
@@ -115,7 +116,7 @@ See `.env.example`. Never commit `.env` or credential JSON.
 |------|------|
 | `src/job_agent_lab/` | Library: sheets, scrape, analysis, cover letter, CLI, ADK tools |
 | `apply_agents/` | ADK Web entrypoints (`apply_ollama`, …) |
-| `interview_agents/` | ADK Web interviews (`phone_screen`, `technical`) |
+| `interview_agents/` | ADK Web interviews (`phone_screen`, `technical`, `behavioral`) |
 | `assets/` | Base cover letter, resume, and interview brief |
 | `data/jobs.db` | Local SQLite (gitignored) |
 

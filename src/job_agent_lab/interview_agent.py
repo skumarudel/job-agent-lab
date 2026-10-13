@@ -85,6 +85,46 @@ Debrief (only when they say they are done, or after the closing question):
 - If they claimed something that is not on the resume, say so plainly.
 """.strip()
 
+BEHAVIORAL_INSTRUCTION = """
+You are running a typed behavioral interview for the job title at the company
+name. Stay in that role until the debrief. Do not open a job URL and do not
+look up the jobs database.
+
+Setup (before any question):
+1. Call load_interview_resume. If the user uploaded a file, pass artifact_name
+   from the "[Uploaded Artifact: ...]" note. If they gave a path, pass file_path.
+2. Call load_interview_brief with no arguments so the markdown brief is loaded.
+   If the user already typed company name, job title, main job responsibilities,
+   company culture, and business stream in chat, pass those strings instead.
+3. If either tool fails, say what is missing and stop. Do not invent a company
+   name, job title, resume, responsibilities, culture, or business stream.
+4. Ask for real situations. Company culture sets the themes. Responsibilities
+   set where the work involves other people.
+   When a role or project on the resume fits, name it in the question.
+   When none fits, ask them for a real situation. Do not invent the story,
+   the teammates, or the outcome.
+
+Interview:
+- Ask one question, then stop and wait.
+- Each question should draw out a situation, what they had to do, what they
+  actually did, and the result.
+- If the answer is missing one of those pieces, ask one follow-up for that
+  piece before you change topics.
+- Aim for about 6 questions, then a close.
+- Do not invent employers, teammates, metrics, tools, degrees, or achievements.
+- Do not coach, score, or suggest better answers while you are still the
+  interviewer.
+
+Debrief (only when they say they are done, or after the closing question):
+- Leave the interviewer role.
+- Cover which stories matched the culture and the role, which were vague, and
+  stronger answers.
+- Stronger answers may use only facts that appear in the resume text or that
+  the candidate stated and that do not contradict the resume.
+- If they claimed an employer, project, or result that is not on the resume,
+  say so plainly.
+""".strip()
+
 _INTERVIEW_KINDS = {
     "phone_screen": {
         "instruction": INTERVIEW_INSTRUCTION,
@@ -97,6 +137,13 @@ _INTERVIEW_KINDS = {
         "instruction": TECHNICAL_INSTRUCTION,
         "description": (
             "Runs a typed technical interview from an uploaded resume and a "
+            "markdown interview brief using Bedrock Claude Haiku."
+        ),
+    },
+    "behavioral": {
+        "instruction": BEHAVIORAL_INSTRUCTION,
+        "description": (
+            "Runs a typed behavioral interview from an uploaded resume and a "
             "markdown interview brief using Bedrock Claude Haiku."
         ),
     },
@@ -119,7 +166,7 @@ def interview_spec(kind: str) -> dict[str, str]:
     """Return the instruction and description for an interview kind.
 
     Args:
-        kind: ``phone_screen`` or ``technical``.
+        kind: ``phone_screen``, ``technical``, or ``behavioral``.
 
     Returns:
         Mapping with ``instruction`` and ``description``.
@@ -145,7 +192,7 @@ def build_interview_agent(
     """Build a typed interview chat for the given kind.
 
     Args:
-        kind: ``phone_screen`` or ``technical``.
+        kind: ``phone_screen``, ``technical``, or ``behavioral``.
         name: Chat name shown in ``adk web``. Defaults to ``kind``.
 
     Returns:
@@ -174,7 +221,7 @@ def build_interview_app(kind: str = "phone_screen") -> App:
     returns plain text.
 
     Args:
-        kind: ``phone_screen`` or ``technical``. This is also the app name.
+        kind: ``phone_screen``, ``technical``, or ``behavioral``. This is also the app name.
 
     Returns:
         ``App`` whose root chat is the requested interview.

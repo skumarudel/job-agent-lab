@@ -11,6 +11,7 @@ from google.genai import types
 from job_agent_lab.interview_agent import (
     DEFAULT_INTERVIEW_MODEL,
     INTERVIEW_INSTRUCTION,
+    BEHAVIORAL_INSTRUCTION,
     TECHNICAL_INSTRUCTION,
     build_interview_agent,
     build_interview_app,
@@ -250,6 +251,27 @@ def test_build_technical_interview(monkeypatch):
     assert app.plugins[0]._attach_file_reference is False
 
 
+def test_build_behavioral_interview(monkeypatch):
+    monkeypatch.setenv("INTERVIEW_MODEL", "bedrock/custom-haiku")
+    agent = build_interview_agent(kind="behavioral")
+    assert agent.name == "behavioral"
+    assert agent.model.model == "bedrock/custom-haiku"
+    assert len(agent.tools) == 2
+    assert "one question" in BEHAVIORAL_INSTRUCTION.lower()
+    assert "Do not invent" in BEHAVIORAL_INSTRUCTION
+    assert "real situation" in BEHAVIORAL_INSTRUCTION
+    assert "not on the resume" in BEHAVIORAL_INSTRUCTION
+    assert "load_interview_brief" in BEHAVIORAL_INSTRUCTION
+    assert "load_job_posting" not in BEHAVIORAL_INSTRUCTION
+    assert agent.instruction == BEHAVIORAL_INSTRUCTION
+
+    app = build_interview_app(kind="behavioral")
+    assert app.name == "behavioral"
+    assert app.root_agent.name == "behavioral"
+    assert type(app.plugins[0]).__name__ == "SaveFilesAsArtifactsPlugin"
+    assert app.plugins[0]._attach_file_reference is False
+
+
 def test_unknown_interview_kind_is_rejected():
     with pytest.raises(ValueError, match="phone_screen"):
-        build_interview_agent(kind="behavioral")
+        build_interview_agent(kind="panel")
